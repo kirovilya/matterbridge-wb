@@ -1,48 +1,30 @@
 /**
- * This file contains the plugin template.
- *
- * @file module.ts
- * @author Luca Liguori
- * @created 2025-06-15
- * @version 1.3.0
- * @license Apache-2.0
- *
- * Copyright 2025, 2026, 2027 Luca Liguori.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Matterbridge Wirenboard Plugin - подключение устройств Wirenboard к Matter.
  */
 
-import { MatterbridgeDynamicPlatform, MatterbridgeEndpoint, onOffOutlet, PlatformConfig, PlatformMatterbridge } from 'matterbridge';
+import { MatterbridgeDynamicPlatform, PlatformConfig, PlatformMatterbridge } from 'matterbridge';
 import { AnsiLogger, LogLevel } from 'matterbridge/logger';
 
+import { WbDeviceFactory } from './WbDeviceFactory.js';
+import { WbMqttClient } from './WbMqttClient.js';
+
 /**
- * This is the standard interface for Matterbridge plugins.
- * Each plugin should export a default function that follows this signature.
+ * Инициализация плагина.
  *
- * @param {PlatformMatterbridge} matterbridge - An instance of MatterBridge.
- * @param {AnsiLogger} log - An instance of AnsiLogger. This is used for logging messages in a format that can be displayed with ANSI color codes and in the frontend.
- * @param {PlatformConfig} config - The platform configuration.
- * @returns {TemplatePlatform} - An instance of the MatterbridgeAccessory or MatterbridgeDynamicPlatform class. This is the main interface for interacting with the Matterbridge system.
+ * @param {unknown} matterbridge Экземпляр matterbridge.
+ * @param {AnsiLogger} log Логгер.
+ * @param {PlatformConfig} config Конфигурация платформы.
+ * @returns {WirenboardPlatform} Экземпляр платформы.
  */
-export default function initializePlugin(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: PlatformConfig): TemplatePlatform {
-  return new TemplatePlatform(matterbridge, log, config);
+export default function initializePlugin(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: PlatformConfig): WirenboardPlatform {
+  return new WirenboardPlatform(matterbridge, log, config);
 }
 
-// Here we define the TemplatePlatform class, which extends the MatterbridgeDynamicPlatform.
-// If you want to create an Accessory platform plugin, you should extend the MatterbridgeAccessoryPlatform class instead.
-export class TemplatePlatform extends MatterbridgeDynamicPlatform {
+export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
+  private mqttClient: WbMqttClient | undefined;
+  private deviceFactory: WbDeviceFactory | undefined;
+
   constructor(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: PlatformConfig) {
-    // Always call super(matterbridge, log, config)
     super(matterbridge, log, config);
 
     // Verify that Matterbridge is the correct version
@@ -52,77 +34,116 @@ export class TemplatePlatform extends MatterbridgeDynamicPlatform {
       );
     }
 
-    this.log.info(`Initializing Platform...`);
-    // You can initialize your platform here, like setting up initial state or loading configurations.
+    this.log.info(`Initializing Wirenboard Platform...`);
+
+    const host = String(this.config.host || 'mqtt://localhost');
+    const port = Number(this.config.port || 1883);
+    const username = String(this.config.username || '');
+    const password = String(this.config.password || '');
+    const clientId = String(this.config.clientId || '');
+    const protocolVersion = Number(this.config.protocolVersion || 5);
+    const debug = Boolean(this.config.debug || false);
+    const language = String(this.config.language || 'ru');
+
+    this.mqttClient = new WbMqttClient(host, port, username, password, clientId, protocolVersion as 3 | 4 | 5, debug, language);
+
+    this.deviceFactory = new WbDeviceFactory(log, {
+      aggregatorVendorId: this.matterbridge.aggregatorVendorId,
+      language: language,
+    });
   }
 
-  override async onStart(reason?: string) {
-    this.log.info(`onStart called with reason: ${reason ?? 'none'}`);
+  override async onStart(_reason?: string): Promise<void> {
+    this.log.info(`Starting Wirenboard...`);
 
-    // Wait for the platform to fully load the select if you use them.
     await this.ready;
-
-    // Clean the selectDevice and selectEntity maps, if you want to reset the select. This is useful when you have an API that sends all the devices and you want to rediscover all of them.
     await this.clearSelect();
 
-    // Implements your own logic there
+    await this.mqttClient?.start();
+
+    // Ждём подключения MQTT
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // Повторный поиск после получения данных
     await this.discoverDevices();
   }
 
-  override async onConfigure() {
-    // Always call super.onConfigure()
+  override async onConfigure(): Promise<void> {
     await super.onConfigure();
-
     this.log.info('onConfigure called');
 
-    // Configure all your devices. The persisted attributes need to be updated.
     for (const device of this.getDevices()) {
-      this.log.info(`Configuring device ${device.deviceName} with id ${device.originalId}`);
-      // You can update the device configuration here, for example:
-      // device.updateConfiguration({ key: 'value' });
+      this.log.info(`Configuring device: ${device.uniqueId}`);
     }
   }
 
-  override async onChangeLoggerLevel(logLevel: LogLevel) {
+  override async onChangeLoggerLevel(logLevel: LogLevel): Promise<void> {
     this.log.info(`onChangeLoggerLevel called with: ${logLevel}`);
-    // Change here the logger level of the api you use or of your devices
   }
 
-  override async onShutdown(reason?: string) {
-    // Always call super.onShutdown(reason)
+  override async onShutdown(reason?: string): Promise<void> {
     await super.onShutdown(reason);
 
     this.log.info(`onShutdown called with reason: ${reason ?? 'none'}`);
-    if (this.config.unregisterOnShutdown) await this.unregisterAllDevices();
+    await this.mqttClient?.stop();
+    if (this.config.unregisterOnShutdown === true) await this.unregisterAllDevices();
   }
 
-  private async discoverDevices() {
-    this.log.info('Discovering devices...');
-    // Implement device discovery logic here.
-    // For example, you might fetch devices from an API.
-    // and register them with the Matterbridge instance.
+  private async discoverDevices(): Promise<void> {
+    this.log.info('Discovering Wirenboard devices...');
 
-    // Example: Create and register an outlet device
-    // If you want to create an Accessory platform plugin and your platform extends MatterbridgeAccessoryPlatform,
-    // instead of createDefaultBridgedDeviceBasicInformationClusterServer, call createDefaultBasicInformationClusterServer().
-    const outlet = new MatterbridgeEndpoint(onOffOutlet, { id: 'outlet1' })
-      .createDefaultBridgedDeviceBasicInformationClusterServer('Outlet', 'SN123456', this.matterbridge.aggregatorVendorId, 'Matterbridge', 'Matterbridge Outlet', 10000, '1.0.0')
-      .createDefaultPowerSourceWiredClusterServer()
-      .addRequiredClusterServers()
-      .addCommandHandler('on', (data) => {
-        this.log.info(`Command on called on cluster ${data.cluster}`);
-      })
-      .addCommandHandler('off', (data) => {
-        this.log.info(`Command off called on cluster ${data.cluster}`);
+    const devices = this.mqttClient?.getDevices() || [];
+    this.log.info(`Found ${devices.length} Wirenboard devices:`);
+
+    await this.clearSelect();
+
+    for (const wbDevice of devices) {
+      this.log.info(`  - ${wbDevice.name} (${wbDevice.id})`);
+
+      const whiteList = (this.config.whiteList as string[]) || [];
+      const blackList = (this.config.blackList as string[]) || [];
+
+      const matchesWhiteList = whiteList.length === 0 || whiteList.includes(wbDevice.id) || whiteList.includes(wbDevice.name);
+      const isBlacklisted = blackList.includes(wbDevice.id) || blackList.includes(wbDevice.name);
+
+      if (!matchesWhiteList || isBlacklisted) {
+        this.log.info(`    Skipping (not in whiteList or in blackList)`);
+        continue;
+      }
+
+      const controls = this.mqttClient?.getControls(wbDevice.id) || [];
+      if (controls.length === 0) {
+        this.log.info(`    No controls, skipping`);
+        continue;
+      }
+
+      const matterDevices = this.deviceFactory?.createDevices(wbDevice, controls, (deviceId, controlId) => this.mqttClient?.getState(deviceId, controlId), {
+        setState: async (deviceId, controlId, value) => this.mqttClient?.setState(deviceId, controlId, value),
       });
 
-    // Set the selectDevice for the outlet we created. This is used to link the device with the select in the frontend.
-    this.setSelectDevice('SN123456', 'Outlet');
+      if (!matterDevices || matterDevices.length === 0) {
+        continue;
+      }
 
-    // Validate the device with the select before registering it.
-    const selected = this.validateDevice(['Outlet', 'SN123456']);
+      this.setSelectDevice(wbDevice.id, wbDevice.name, undefined, 'wifi');
+      if (!this.validateDevice([wbDevice.name, wbDevice.id], true)) {
+        this.log.info(`    Skipping (not selected in UI)`);
+        continue;
+      }
 
-    // Register the device with this Matterbridge Platform.
-    if (selected) await this.registerDevice(outlet);
+      let deviceIndex = 0;
+
+      for (const matterDevice of matterDevices) {
+        if (deviceIndex > 0) {
+          matterDevice.name = `${wbDevice.name}_${deviceIndex}`;
+        }
+        await this.registerDevice(matterDevice);
+        deviceIndex++;
+      }
+
+      this.log.info(`    Registered ${matterDevices.length} Matter endpoint(s)`);
+    }
+
+    this.log.info(`Registered to Matter bridge`);
   }
 }

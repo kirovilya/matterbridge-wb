@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "matterbridge-wb.schema.json",
+  "title": "Matterbridge WB",
+  "description": "Matterbridge Wirenboard Plugin",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "default": "matterbridge-wb"
+    },
+    "type": {
+      "type": "string",
+      "default": "DynamicPlatform"
+    },
+    "host": {
+      "type": "string",
+      "default": "mqtt://localhost",
+      "description": "MQTT broker URL (mqtt://, mqtts://, mqtt+unix://)"
+    },
+    "port": {
+      "type": "number",
+      "default": 1883,
+      "description": "MQTT broker port"
+    },
+    "username": {
+      "type": "string",
+      "default": "",
+      "description": "MQTT username (optional)"
+    },
+    "password": {
+      "type": "string",
+      "default": "",
+      "description": "MQTT password (optional)"
+    },
+    "clientId": {
+      "type": "string",
+      "default": "",
+      "description": "MQTT client ID (optional, auto-generated if empty)"
+    },
+    "protocolVersion": {
+      "type": "number",
+      "enum": [3, 4, 5],
+      "default": 5,
+      "description": "MQTT protocol version"
+    },
+    "debug": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable debug logging"
+    },
+    "language": {
+      "type": "string",
+      "enum": ["ru", "en"],
+      "default": "ru",
+      "description": "Device title language"
+    },
+    "whiteList": {
+      "title": "White List",
+      "description": "Only the devices in the list will be exposed. If the list is empty, all the devices will be exposed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "blackList": {
+      "title": "Black List",
+      "description": "The devices in the list will not be exposed. If the list is empty, no devices will be excluded.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "selectFrom": "name"
+    },
+    "postfix": {
+      "type": "string",
+      "default": "",
+      "description": "Append postfix to device names in Matter"
+    },
+    "unregisterOnShutdown": {
+      "type": "boolean",
+      "default": false,
+      "description": "Remove all devices from bridge on shutdown"
+    }
+  },
+  "required": ["name", "type", "host", "port"]
+}

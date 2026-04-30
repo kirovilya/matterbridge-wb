@@ -1,11 +1,11 @@
 {
-  "name": "matterbridge-plugin-template",
-  "version": "1.0.18",
-  "description": "Matterbridge Template Plugin",
-  "author": "https://github.com/Luligu",
-  "homepage": "https://www.npmjs.com/package/matterbridge-plugin-template",
+  "name": "matterbridge-wb",
+  "version": "0.5.0",
+  "description": "Matterbridge Wirenboard Plugin",
+  "author": "https://github.com/kirovilya",
+  "homepage": "https://www.npmjs.com/package/matterbridge-wb",
   "license": "Apache-2.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "main": "dist/module.js",
   "types": "dist/module.d.ts",
@@ -20,14 +20,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Luligu/matterbridge-plugin-template.git"
+    "url": "git+https://github.com/kirovilya/matterbridge-wb.git"
   },
   "bugs": {
-    "url": "https://github.com/Luligu/matterbridge-plugin-template/issues"
-  },
-  "funding": {
-    "type": "buymeacoffee",
-    "url": "https://www.buymeacoffee.com/luligugithub"
+    "url": "https://github.com/kirovilya/matterbridge-wb/issues"
   },
   "keywords": [
     "matterbridge",
@@ -53,7 +49,9 @@
     "childbridge",
     "frontend",
     "hass",
-    "hassio"
+    "hassio",
+    "wirenboard",
+    "wb"
   ],
   "files": [
     "bin",
@@ -120,6 +118,7 @@
     "matterbridge:list": "matterbridge -list"
   },
   "dependencies": {
+    "mqtt": "^5.11.0",
     "node-ansi-logger": "3.2.1",
     "node-persist-manager": "2.0.2"
   },

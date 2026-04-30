@@ -66,6 +66,8 @@ export default defineConfig([
       'require-await': 'off', // Allow async functions that don't use await
       'n/prefer-node-protocol': 'error', // Prefer using 'node:' protocol for built-in modules
       'n/no-unsupported-features/node-builtins': ['error', { ignores: ['fetch'] }],
+      'n/no-extrausible-null-imports': 'off', // Allow plausible null imports
+      'n/no-missing-import': 'off', // Allow missing imports (for npm-linked packages)
       'n/no-extraneous-import': 'off', // Allow imports from node_modules
       'n/no-unpublished-import': 'off', // Allow imports from unpublished packages
       'jsdoc/tag-lines': ['error', 'any', { startLines: 1, endLines: 0 }], // Require a blank line before JSDoc comments

@@ -1,0 +1,10 @@
+{
+  "name": "matterbridge-wb",
+  "type": "DynamicPlatform",
+  "host": "mqtt://localhost",
+  "port": 1883,
+  "whiteList": [],
+  "blackList": [],
+  "debug": false,
+  "unregisterOnShutdown": false
+}
