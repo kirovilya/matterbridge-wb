@@ -35,6 +35,7 @@ jobs:
         with:
           node-version: '24.x'
           cache: npm
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Verify Node.js version
         run: node -v
@@ -74,6 +75,8 @@ jobs:
 
       - name: Publish the plugin to npm with trusted publishing / OIDC
         run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Trigger Matterbridge Docker Build Main
         if: env.PAT_TOKEN != ''
@@ -131,6 +134,7 @@ jobs:
         with:
           node-version: '24.x'
           cache: npm
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Verify Node.js version
         run: node -v
@@ -183,6 +187,8 @@ jobs:
 
       - name: Check if a new dev-publish is needed
         id: check_new
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           # ensure npm can read the private or public registry
           npm config set //registry.npmjs.org/:_authToken=$NODE_AUTH_TOKEN
@@ -216,6 +222,8 @@ jobs:
       - name: Publish the plugin to npm under dev tag with trusted publishing / OIDC
         if: steps.check_new.outputs.should_publish  == 'true'
         run: npm publish --tag dev
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Trigger Matterbridge Docker Build Dev
         if: steps.check_new.outputs.should_publish  == 'true' && env.PAT_TOKEN != ''
