@@ -54,7 +54,7 @@ const createMockMatterbridge = (version = '3.5.0'): PlatformMatterbridge =>
 const createMockConfig = (overrides: Partial<PlatformConfig> = {}): PlatformConfig => ({
   name: 'matterbridge-wb',
   type: 'DynamicPlatform',
-  version: '0.5.0',
+  version: '0.6.0',
   host: 'mqtt://localhost',
   port: 1883,
   whiteList: [],
