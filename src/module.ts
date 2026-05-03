@@ -1,20 +1,21 @@
 /**
  * Matterbridge Wirenboard Plugin - подключение устройств Wirenboard к Matter.
- * 
+ *
  */
 
 import { MatterbridgeDynamicPlatform, PlatformConfig, PlatformMatterbridge } from 'matterbridge';
 import { AnsiLogger, LogLevel } from 'matterbridge/logger';
 
+import { findMappingRule, isZ2mExcluded } from './wbControlMapping.js';
 import { WbDeviceFactory } from './WbDeviceFactory.js';
 import { WbMqttClient } from './WbMqttClient.js';
-import { 
-  findMappingRule, 
-  isZ2mExcluded
-} from './wbControlMapping.js';
 
 /**
  * Плагин для Wirenboard - подключает контролы WB как отдельные Matter устройства.
+ *
+ * @param matterbridge
+ * @param log
+ * @param config
  */
 export default function initializePlugin(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: PlatformConfig): WirenboardPlatform {
   return new WirenboardPlatform(matterbridge, log, config);
@@ -61,6 +62,8 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
 
   /**
    * Запуск плагина.
+   *
+   * @param _reason
    */
   override async onStart(_reason?: string): Promise<void> {
     this.log.info(`Starting Matterbridge Wirenboard plugin ...`);
@@ -93,6 +96,8 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
 
   /**
    * Изменение уровня логирования.
+   *
+   * @param logLevel
    */
   override async onChangeLoggerLevel(logLevel: LogLevel): Promise<void> {
     this.log.info(`onChangeLoggerLevel called with: ${logLevel}`);
@@ -100,15 +105,17 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
 
   /**
    * Остановка плагина.
+   *
+   * @param reason
    */
   override async onShutdown(reason?: string): Promise<void> {
     await super.onShutdown(reason);
 
     this.log.info(`onShutdown called with reason: ${reason ?? 'none'}`);
-    
+
     // Останавливаем MQTT
     await this.mqttClient?.stop();
-    
+
     // Если настроено - удаляем все устройства при остановке
     if (this.config.unregisterOnShutdown === true) {
       await this.unregisterAllDevices();
@@ -133,16 +140,16 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
     this.log.info('Synchronizing registered devices with whiteList/blackList...');
     const existingDevices = this.getDevices();
     let unregisterCount = 0;
-    
+
     for (const device of existingDevices) {
       const deviceName = device.deviceName;
       const serialNumber = device.serialNumber;
-      
+
       if (!deviceName || !serialNumber) {
         this.log.warn(`Skipping device with missing deviceName or serialNumber`);
         continue;
       }
-      
+
       // Проверяем whiteList/blackList
       // serialNumber имеет формат deviceId/controlId
       if (!this.validateDevice([deviceName, serialNumber], true)) {
@@ -151,7 +158,7 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
         unregisterCount++;
       }
     }
-    
+
     if (unregisterCount > 0) {
       this.log.info(`Unregistered ${unregisterCount} device(s)`);
     }
@@ -168,7 +175,7 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
 
       // Получаем контролы этого устройства
       const controls = this.mqttClient?.getControls(wbDevice.id) || [];
-      
+
       if (controls.length === 0) {
         this.log.info(`Skipping ${wbDevice.id} (no controls)`);
         continue;
@@ -197,7 +204,7 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
       for (const matterDevice of matterDevices) {
         // serialNumber уже установлен при создании (формат: deviceId/controlId)
         const serialNumber = matterDevice.serialNumber;
-        
+
         if (!serialNumber) {
           this.log.warn(`Skipping device with missing serialNumber`);
           continue;
@@ -227,14 +234,23 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
 
   /**
    * Определяет отображаемое имя контрола.
+   *
+   * @param control
+   * @param control.title
+   * @param control.title.en
+   * @param control.title.ru
+   * @param control.name
+   * @param control.id
+   * @param device
+   * @param device.name
    */
   private getDeviceDisplayName(control: { title?: { en?: string; ru?: string }; name?: string; id: string }, device: { name: string }): string {
     const langKey = this.config.language as 'en' | 'ru';
-    
+
     // Пробуем взять title контрола
     const titleAny = control.title as { en?: string; ru?: string } | undefined;
     let name = titleAny?.[langKey] || titleAny?.en || titleAny?.ru;
-    
+
     // Если нет title - пробуем name
     if (!name) {
       name = control.name || control.id;
@@ -260,13 +276,13 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
     // Подписываемся на событие изменения состояния
     this.mqttClient.on('state', async (deviceId, controlId, value) => {
       this.log.debug(`MQTT state change: ${deviceId}/${controlId} = ${value}`);
-      
+
       // Формат serialNumber как при регистрации (с префиксом WB-)
       const serialNumber = `WB-${deviceId}/${controlId}`;
-      
+
       // Ищем Matter устройство по serialNumber
-      const matterDevice = this.getDevices().find(d => d.serialNumber === serialNumber);
-      
+      const matterDevice = this.getDevices().find((d) => d.serialNumber === serialNumber);
+
       if (!matterDevice) {
         // Устройство не найдено - возможно отключено в whiteList/blackList
         this.log.debug(`Device ${serialNumber} not found in registered devices`);
@@ -276,9 +292,9 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
       this.log.debug(`Found matter device: ${matterDevice.uniqueId}, ${matterDevice.serialNumber}`);
 
       // Получаем контрол и устройство WB
-      const wbDevice = this.mqttClient?.getDevices().find(d => d.id === deviceId);
-      const control = this.mqttClient?.getControls(deviceId).find(c => c.id === controlId);
-      
+      const wbDevice = this.mqttClient?.getDevices().find((d) => d.id === deviceId);
+      const control = this.mqttClient?.getControls(deviceId).find((c) => c.id === controlId);
+
       if (!wbDevice || !control) {
         return;
       }
@@ -286,7 +302,7 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
       // Находим правило мэппинга
       const mapping = findMappingRule(control, wbDevice);
       this.log.debug(`Mapping for ${control.type}: ${mapping?.matterDeviceType}, stateUpdate: ${!!mapping?.stateUpdate}`);
-      
+
       if (!mapping?.stateUpdate) {
         this.log.debug(`No stateUpdate for ${serialNumber}`);
         return;

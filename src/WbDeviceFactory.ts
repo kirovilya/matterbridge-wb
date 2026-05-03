@@ -1,25 +1,15 @@
 /**
  * Фабрика устройств для преобразования контролов Wirenboard в Matter endpoints.
- * 
+ *
  * Основной принцип: КАЖДЫЙ контрол = отдельное Matter устройство.
  * Это позволяет правильно работать с whiteList/blackList в интерфейсе Matterbridge.
  */
 
-import { 
-  contactSensor, 
-  dimmableLight, 
-  electricalSensor, 
-  genericSwitch,
-  humiditySensor, 
-  lightSensor, 
-  MatterbridgeEndpoint, 
-  onOffLight,
-  temperatureSensor 
-} from 'matterbridge';
+import { contactSensor, dimmableLight, electricalSensor, genericSwitch, humiditySensor, lightSensor, MatterbridgeEndpoint, onOffLight, temperatureSensor } from 'matterbridge';
 import { AnsiLogger } from 'node-ansi-logger';
 
+import { canMapToMatter, type ControlMappingRule, findMappingRule } from './wbControlMapping.js';
 import type { WbControl, WbDevice, WbState } from './WbMqttClient.js';
-import { findMappingRule, canMapToMatter, type MatterDeviceType, type ControlMappingRule } from './wbControlMapping.js';
 
 /**
  * Интерфейс для получения состояния контрола.
@@ -53,28 +43,22 @@ export class WbDeviceFactory {
     this.language = matterbridge.language || 'ru';
   }
 
-  
-
-/**
+  /**
    * Создаёт массив Matter устройств из массива контролов.
-   * 
+   *
    * Внутренняя логика:
    * - По умолчанию: создаём по одному устройству на контрол
    * - Фильтруем только поддерживаемые контролы (canMapToMatter)
    * - Применяем мэппинг (findMappingRule)
-   * 
+   *
    * Для будущего: можно добавить логику группировки нескольких контролов в одно устройство.
-   * 
+   *
    * @param device - родительское устройство WB
    * @param controls - массив контролов
    * @param callbacks - коллбэки для работы с MQTT
    * @returns массив Matter устройств (может быть пустым)
    */
-  public createDevices(
-    device: WbDevice,
-    controls: WbControl[],
-    callbacks: MqttCallbacks,
-  ): MatterbridgeEndpoint[] {
+  public createDevices(device: WbDevice, controls: WbControl[], callbacks: MqttCallbacks): MatterbridgeEndpoint[] {
     const result: MatterbridgeEndpoint[] = [];
 
     // Перебираем контролы и создаём Matter устройства
@@ -121,14 +105,17 @@ export class WbDeviceFactory {
   /**
    * Определяет имя контрола для отображения в Matter.
    * Использует localized title, name или fallback.
+   *
+   * @param control
+   * @param device
    */
   private getControlName(control: WbControl, device: WbDevice): string {
     const langKey = this.language as 'en' | 'ru';
-    
+
     // Пробуем взять title контрола
     const titleAny = control.title as { en?: string; ru?: string } | undefined;
     let name = titleAny?.[langKey] || titleAny?.en || titleAny?.ru;
-    
+
     // Если нет title - пробуем name
     if (!name) {
       name = control.name || control.id;
@@ -151,6 +138,13 @@ export class WbDeviceFactory {
 
   /**
    * Создаёт Matter устройство на основе правила мэппинга.
+   *
+   * @param uniqueId
+   * @param deviceName
+   * @param device
+   * @param control
+   * @param mapping
+   * @param callbacks
    */
   private createFromMapping(
     uniqueId: string,
@@ -166,76 +160,48 @@ export class WbDeviceFactory {
 
     switch (mapping.matterDeviceType) {
       case 'onOffSwitch':
-        return new MatterbridgeEndpoint(onOffLight, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
-          .createDefaultPowerSourceWiredClusterServer()
-          .addRequiredClusterServers()
-          // Команда включения - отправляем в MQTT
-          .addCommandHandler('on', async () => {
-            await callbacks.setState(deviceId, controlId, 1);
-          })
-          .addCommandHandler('off', async () => {
-            await callbacks.setState(deviceId, controlId, 0);
-          });
+        return (
+          new MatterbridgeEndpoint(onOffLight, { id: uniqueId })
+            .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
+            .createDefaultPowerSourceWiredClusterServer()
+            .addRequiredClusterServers()
+            // Команда включения - отправляем в MQTT
+            .addCommandHandler('on', async () => {
+              await callbacks.setState(deviceId, controlId, 1);
+            })
+            .addCommandHandler('off', async () => {
+              await callbacks.setState(deviceId, controlId, 0);
+            })
+        );
 
       case 'genericSwitch':
         // Кнопка - использует Switch cluster
         // Не имеет команд управления (только передаёт состояние в Matter)
         return new MatterbridgeEndpoint(genericSwitch, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
       case 'dimmableLight':
-        return new MatterbridgeEndpoint(dimmableLight, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
-          .createDefaultPowerSourceWiredClusterServer()
-          .addRequiredClusterServers()
-          // Команда включения
-          .addCommandHandler('on', async () => {
-            await callbacks.setState(deviceId, controlId, 255);
-          })
-          // Команда выключения
-          .addCommandHandler('off', async () => {
-            await callbacks.setState(deviceId, controlId, 0);
-          });
+        return (
+          new MatterbridgeEndpoint(dimmableLight, { id: uniqueId })
+            .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
+            .createDefaultPowerSourceWiredClusterServer()
+            .addRequiredClusterServers()
+            // Команда включения
+            .addCommandHandler('on', async () => {
+              await callbacks.setState(deviceId, controlId, 255);
+            })
+            // Команда выключения
+            .addCommandHandler('off', async () => {
+              await callbacks.setState(deviceId, controlId, 0);
+            })
+        );
 
       case 'colorLight':
         // Пока создаём как onOffLight - цветной свет требует дополнительной логики
         return new MatterbridgeEndpoint(onOffLight, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers()
           .addCommandHandler('on', async () => {
@@ -247,71 +213,31 @@ export class WbDeviceFactory {
 
       case 'temperatureSensor':
         return new MatterbridgeEndpoint(temperatureSensor, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
       case 'humiditySensor':
         return new MatterbridgeEndpoint(humiditySensor, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
       case 'lightSensor':
         return new MatterbridgeEndpoint(lightSensor, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
       case 'electricalSensor':
         return new MatterbridgeEndpoint(electricalSensor, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
       case 'contactSensor':
         return new MatterbridgeEndpoint(contactSensor, { id: uniqueId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(
-            deviceName,
-            `WB-${uniqueId}`,
-            vid,
-            'Wirenboard',
-            `WB ${deviceName}`,
-            10000,
-            '1.0.0',
-          )
+          .createDefaultBridgedDeviceBasicInformationClusterServer(deviceName, `WB-${uniqueId}`, vid, 'Wirenboard', `WB ${deviceName}`, 10000, '1.0.0')
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
@@ -320,5 +246,4 @@ export class WbDeviceFactory {
         return null;
     }
   }
-
-  }
+}

@@ -42,6 +42,16 @@ export interface WbControl {
 }
 
 /**
+ * Проверяет, является ли значение readonly истинным (1, true, '1', 'true').
+ *
+ * @param {unknown} value - Значение для проверки (может быть number, string или boolean)
+ * @returns {boolean} true, если значение истинное
+ */
+function isTruthyReadonly(value: unknown): boolean {
+  return value === 1 || value === true || value === '1' || value === 'true';
+}
+
+/**
  * Состояние устройства Wirenboard.
  */
 export interface WbState {
@@ -295,7 +305,7 @@ export class WbMqttClient extends EventEmitter {
       precision: meta.precision,
       // Преобразуем число/строку в boolean: 0/false = false, 1/true = true
       // Приводим к any потому что meta.readonly может быть number, string или boolean
-      readonly: (meta.readonly as any) === 1 || (meta.readonly as any) === true || (meta.readonly as any) === '1' || (meta.readonly as any) === 'true',
+      readonly: isTruthyReadonly(meta.readonly),
       hidden: meta.hidden,
       enum: meta.enum,
     };

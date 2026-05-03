@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Улучшенная конвертация RGB → XY для цветных ламп
 - Исправлена обработка readonly (number/string/boolean)
 
-
 ## [0.5.0] - 2026-04-30
 
 [0.5.0]: https://github.com/kirovilya/matterbridge-wb/releases/tag/v0.5.0
