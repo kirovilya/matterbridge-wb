@@ -63,7 +63,7 @@
         "type": "string"
       },
       "uniqueItems": true,
-      "selectFrom": "name"
+      "selectFrom": "serial"
     },
     "blackList": {
       "title": "Black List",
@@ -73,7 +73,7 @@
         "type": "string"
       },
       "uniqueItems": true,
-      "selectFrom": "name"
+      "selectFrom": "serial"
     },
     "postfix": {
       "type": "string",

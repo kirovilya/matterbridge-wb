@@ -293,7 +293,9 @@ export class WbMqttClient extends EventEmitter {
       min: meta.min,
       max: meta.max,
       precision: meta.precision,
-      readonly: meta.readonly,
+      // Преобразуем число/строку в boolean: 0/false = false, 1/true = true
+      // Приводим к any потому что meta.readonly может быть number, string или boolean
+      readonly: (meta.readonly as any) === 1 || (meta.readonly as any) === true || (meta.readonly as any) === '1' || (meta.readonly as any) === 'true',
       hidden: meta.hidden,
       enum: meta.enum,
     };

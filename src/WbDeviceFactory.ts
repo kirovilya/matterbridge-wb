@@ -1,64 +1,47 @@
 /**
- * Фабрика устройств для преобразования устройств Wirenboard в Matter endpoints.
+ * Фабрика устройств для преобразования контролов Wirenboard в Matter endpoints.
+ * 
+ * Основной принцип: КАЖДЫЙ контрол = отдельное Matter устройство.
+ * Это позволяет правильно работать с whiteList/blackList в интерфейсе Matterbridge.
  */
 
-import { contactSensor, dimmableLight, electricalSensor, humiditySensor, lightSensor, MatterbridgeEndpoint, onOffLight, temperatureSensor } from 'matterbridge';
+import { 
+  contactSensor, 
+  dimmableLight, 
+  electricalSensor, 
+  genericSwitch,
+  humiditySensor, 
+  lightSensor, 
+  MatterbridgeEndpoint, 
+  onOffLight,
+  temperatureSensor 
+} from 'matterbridge';
 import { AnsiLogger } from 'node-ansi-logger';
 
-import type { WbControl, WbDevice } from './WbMqttClient.js';
-
-type MatterDeviceType = 'onOffLight' | 'dimmableLight' | 'colorLight' | 'contactSensor' | 'temperatureSensor' | 'humiditySensor' | 'electricalSensor' | 'lightSensor';
-
-interface WbDeviceMatcher {
-  hasControlTypes: string[];
-  hasControlUnits: string[];
-  nameIncludes: string[];
-}
-
-const DEVICE_MATCHERS: { matcher: WbDeviceMatcher; type: MatterDeviceType; isSensor: boolean }[] = [
-  { matcher: { hasControlTypes: ['switch', 'pushbutton'], hasControlUnits: [], nameIncludes: [] }, type: 'onOffLight', isSensor: false },
-  { matcher: { hasControlTypes: ['switch', 'pushbutton'], hasControlUnits: [], nameIncludes: ['rgb'] }, type: 'colorLight', isSensor: false },
-  { matcher: { hasControlTypes: ['switch', 'pushbutton'], hasControlUnits: [], nameIncludes: ['brightness'] }, type: 'dimmableLight', isSensor: false },
-  { matcher: { hasControlTypes: ['range'], hasControlUnits: [], nameIncludes: [] }, type: 'dimmableLight', isSensor: false },
-  { matcher: { hasControlTypes: [], hasControlUnits: ['deg C'], nameIncludes: [] }, type: 'temperatureSensor', isSensor: true },
-  { matcher: { hasControlTypes: ['temperature'], hasControlUnits: [], nameIncludes: [] }, type: 'temperatureSensor', isSensor: true },
-  { matcher: { hasControlTypes: [], hasControlUnits: ['%', 'RH'], nameIncludes: [] }, type: 'humiditySensor', isSensor: true },
-  { matcher: { hasControlTypes: ['rel_humidity'], hasControlUnits: [], nameIncludes: [] }, type: 'humiditySensor', isSensor: true },
-  { matcher: { hasControlTypes: [], hasControlUnits: ['W', 'kWh'], nameIncludes: [] }, type: 'electricalSensor', isSensor: true },
-  { matcher: { hasControlTypes: [], hasControlUnits: ['lx'], nameIncludes: [] }, type: 'lightSensor', isSensor: true },
-  { matcher: { hasControlTypes: ['text', 'alarm'], hasControlUnits: [], nameIncludes: [] }, type: 'contactSensor', isSensor: false },
-];
+import type { WbControl, WbDevice, WbState } from './WbMqttClient.js';
+import { findMappingRule, canMapToMatter, type MatterDeviceType, type ControlMappingRule } from './wbControlMapping.js';
 
 /**
- * Проверяет, соответствуют ли controls условиям matcher.
- *
- * @param {WbControl[]} controls Массив контролов.
- * @param {WbDeviceMatcher} matcher Условия для проверки.
- * @param {string} deviceName Имя устройства.
- * @returns {boolean} True если соответствует.
+ * Интерфейс для получения состояния контрола.
  */
-function matchControls(controls: WbControl[], matcher: WbDeviceMatcher, deviceName: string): boolean {
-  const controlTypes = controls.map((c) => c.type);
-  const units = controls.map((c) => c.units || '');
+type GetStateFn = (deviceId: string, controlId: string) => WbState | undefined;
 
-  if (matcher.hasControlTypes.length > 0) {
-    for (const t of matcher.hasControlTypes) {
-      if (controlTypes.includes(t)) return true;
-    }
-  }
-  if (matcher.hasControlUnits.length > 0) {
-    for (const u of matcher.hasControlUnits) {
-      if (units.some((cu) => cu.includes(u))) return true;
-    }
-  }
-  if (matcher.nameIncludes.length > 0) {
-    for (const p of matcher.nameIncludes) {
-      if (deviceName.toLowerCase().includes(p.toLowerCase())) return true;
-    }
-  }
-  return false;
+/**
+ * Интерфейс для установки состояния контрола (команды из Matter -> MQTT).
+ */
+type SetStateFn = (deviceId: string, controlId: string, value: string | number) => Promise<void>;
+
+/**
+ * Интерфейс коллбэков для работы с MQTT.
+ */
+interface MqttCallbacks {
+  getState: GetStateFn;
+  setState: SetStateFn;
 }
 
+/**
+ * Фабрика для создания Matter устройств из контролов Wirenboard.
+ */
 export class WbDeviceFactory {
   private log: AnsiLogger;
   private matterbridge: { aggregatorVendorId: number };
@@ -70,152 +53,272 @@ export class WbDeviceFactory {
     this.language = matterbridge.language || 'ru';
   }
 
+  
+
+/**
+   * Создаёт массив Matter устройств из массива контролов.
+   * 
+   * Внутренняя логика:
+   * - По умолчанию: создаём по одному устройству на контрол
+   * - Фильтруем только поддерживаемые контролы (canMapToMatter)
+   * - Применяем мэппинг (findMappingRule)
+   * 
+   * Для будущего: можно добавить логику группировки нескольких контролов в одно устройство.
+   * 
+   * @param device - родительское устройство WB
+   * @param controls - массив контролов
+   * @param callbacks - коллбэки для работы с MQTT
+   * @returns массив Matter устройств (может быть пустым)
+   */
   public createDevices(
     device: WbDevice,
     controls: WbControl[],
-    _getState: (deviceId: string, controlId: string) => { value: string | number } | undefined,
-    mqttClient: { setState: (deviceId: string, controlId: string, value: string | number) => Promise<void> },
+    callbacks: MqttCallbacks,
   ): MatterbridgeEndpoint[] {
-    if (controls.length === 0) {
-      this.log.warn(`Device ${device.id} has no controls, skipping`);
-      return [];
-    }
-
     const result: MatterbridgeEndpoint[] = [];
-    const deviceName = this.getDeviceName(device);
-    const deviceId = device.id;
 
-    for (const profile of DEVICE_MATCHERS) {
-      const isMatch = matchControls(controls, profile.matcher, deviceName);
-
-      if (!isMatch) continue;
-
-      if (profile.isSensor) {
-        for (const control of controls) {
-          const controlType = control.type;
-          const units = control.units || '';
-          const name = control.name || control.id;
-          const id = `${deviceId}-${control.id}`;
-
-          const isTemp = controlType === 'temperature' || units.includes('deg C');
-          const isHumid = controlType === 'rel_humidity' || units.includes('%') || units.includes('RH');
-          const isPower = units.includes('W') || units.includes('kWh');
-          const isLux = units.includes('lx');
-
-          if (profile.type === 'temperatureSensor' && isTemp) {
-            result.push(this.createTemperatureSensor(name, id));
-          } else if (profile.type === 'humiditySensor' && isHumid) {
-            result.push(this.createHumiditySensor(name, id));
-          } else if (profile.type === 'electricalSensor' && isPower) {
-            result.push(this.createPowerSensor(name, id));
-          } else if (profile.type === 'lightSensor' && isLux) {
-            result.push(this.createIlluminanceSensor(name, id));
-          }
-        }
-      } else {
-        const endpoint = this.createFromType(profile.type, deviceName, deviceId, mqttClient);
-        if (endpoint) result.push(endpoint);
+    // Перебираем контролы и создаём Matter устройства
+    for (const control of controls) {
+      // Проверяем, можно ли отобразить контрол в Matter
+      if (!canMapToMatter(control, device)) {
+        this.log.debug(`Control ${device.id}/${control.id} not supported - skipping`);
+        continue;
       }
+
+      // Находим правило мэппинга
+      const mapping = findMappingRule(control, device);
+      if (!mapping) {
+        this.log.debug(`No mapping for control ${device.id}/${control.id}`);
+        continue;
+      }
+
+      // Генерируем уникальный ID для Matter устройства
+      // Формат: deviceId/controlId - позволяет каждому контролу быть отдельным устройством
+      const uniqueId = `${device.id}/${control.id}`;
+
+      // Определяем имя устройства
+      const deviceName = this.getControlName(control, device);
+
+      // Создаём Matter устройство
+      const endpoint = this.createFromMapping(uniqueId, deviceName, device, control, mapping, callbacks);
+
+      if (!endpoint) {
+        continue;
+      }
+
+      result.push(endpoint);
+      this.log.info(`Matter device: ${deviceName} (${uniqueId}) -> ${mapping.matterDeviceType}`);
     }
 
-    if (result.length === 0) {
-      this.log.warn(`Device ${device.id} has unsupported controls: ${controls.map((c) => c.type).join(', ')}`);
-    }
+    // === RESERVED FOR FUTURE GROUPING LOGIC ===
+    // Здесь можно будет добавить логику для группировки:
+    // const groupedDevice = tryCreateGroupedDevice(device, controls, callbacks);
+    // if (groupedDevice) return [groupedDevice];
 
     return result;
   }
 
-  private getDeviceName(device: WbDevice): string {
+  /**
+   * Определяет имя контрола для отображения в Matter.
+   * Использует localized title, name или fallback.
+   */
+  private getControlName(control: WbControl, device: WbDevice): string {
     const langKey = this.language as 'en' | 'ru';
-    const titleAny = device.title as { en?: string; ru?: string } | undefined;
-    return device.name || titleAny?.[langKey] || titleAny?.en || titleAny?.ru || device.id;
+    
+    // Пробуем взять title контрола
+    const titleAny = control.title as { en?: string; ru?: string } | undefined;
+    let name = titleAny?.[langKey] || titleAny?.en || titleAny?.ru;
+    
+    // Если нет title - пробуем name
+    if (!name) {
+      name = control.name || control.id;
+    }
+
+    // Для датчиков добавляем единицы измерения
+    if (control.units && control.units !== 'value' && control.units !== '') {
+      name = `${name}, ${control.units}`;
+    }
+
+    // Если ничего не найдено - используем device name + control id
+    if (!name) {
+      const deviceTitleAny = device.title as { en?: string; ru?: string } | undefined;
+      const deviceName = deviceTitleAny?.[langKey] || deviceTitleAny?.en || deviceTitleAny?.ru || device.name;
+      name = `${deviceName}/${control.id}`;
+    }
+
+    return name;
   }
 
-  private createFromType(
-    type: MatterDeviceType,
-    name: string,
-    deviceId: string,
-    mqttClient: { setState: (deviceId: string, controlId: string, value: string | number) => Promise<void> },
+  /**
+   * Создаёт Matter устройство на основе правила мэппинга.
+   */
+  private createFromMapping(
+    uniqueId: string,
+    deviceName: string,
+    device: WbDevice,
+    control: WbControl,
+    mapping: ControlMappingRule,
+    callbacks: MqttCallbacks,
   ): MatterbridgeEndpoint | null {
     const vid = this.matterbridge.aggregatorVendorId;
+    const deviceId = device.id;
+    const controlId = control.id;
 
-    switch (type) {
-      case 'onOffLight':
-        return new MatterbridgeEndpoint(onOffLight, { id: deviceId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
+    switch (mapping.matterDeviceType) {
+      case 'onOffSwitch':
+        return new MatterbridgeEndpoint(onOffLight, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers()
-          .addCommandHandler('on', async () => mqttClient.setState(deviceId, 'on', 1))
-          .addCommandHandler('off', async () => mqttClient.setState(deviceId, 'on', 0));
+          // Команда включения - отправляем в MQTT
+          .addCommandHandler('on', async () => {
+            await callbacks.setState(deviceId, controlId, 1);
+          })
+          .addCommandHandler('off', async () => {
+            await callbacks.setState(deviceId, controlId, 0);
+          });
 
-      case 'dimmableLight':
-        return new MatterbridgeEndpoint(dimmableLight, { id: deviceId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
-          .createDefaultPowerSourceWiredClusterServer()
-          .addRequiredClusterServers()
-          .addCommandHandler('on', async () => mqttClient.setState(deviceId, 'on', 1))
-          .addCommandHandler('off', async () => mqttClient.setState(deviceId, 'on', 0));
-
-      case 'colorLight':
-        return new MatterbridgeEndpoint(onOffLight, { id: deviceId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
-          .createDefaultPowerSourceWiredClusterServer()
-          .addRequiredClusterServers()
-          .addCommandHandler('on', async () => mqttClient.setState(deviceId, 'on', 1))
-          .addCommandHandler('off', async () => mqttClient.setState(deviceId, 'on', 0));
-
-      case 'contactSensor':
-        return new MatterbridgeEndpoint(contactSensor, { id: deviceId })
-          .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
+      case 'genericSwitch':
+        // Кнопка - использует Switch cluster
+        // Не имеет команд управления (только передаёт состояние в Matter)
+        return new MatterbridgeEndpoint(genericSwitch, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
           .createDefaultPowerSourceWiredClusterServer()
           .addRequiredClusterServers();
 
+      case 'dimmableLight':
+        return new MatterbridgeEndpoint(dimmableLight, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers()
+          // Команда включения
+          .addCommandHandler('on', async () => {
+            await callbacks.setState(deviceId, controlId, 255);
+          })
+          // Команда выключения
+          .addCommandHandler('off', async () => {
+            await callbacks.setState(deviceId, controlId, 0);
+          });
+
+      case 'colorLight':
+        // Пока создаём как onOffLight - цветной свет требует дополнительной логики
+        return new MatterbridgeEndpoint(onOffLight, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers()
+          .addCommandHandler('on', async () => {
+            await callbacks.setState(deviceId, controlId, '255;255;255');
+          })
+          .addCommandHandler('off', async () => {
+            await callbacks.setState(deviceId, controlId, '0;0;0');
+          });
+
       case 'temperatureSensor':
-        return this.createTemperatureSensor(name, deviceId);
+        return new MatterbridgeEndpoint(temperatureSensor, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers();
 
       case 'humiditySensor':
-        return this.createHumiditySensor(name, deviceId);
-
-      case 'electricalSensor':
-        return this.createPowerSensor(name, deviceId);
+        return new MatterbridgeEndpoint(humiditySensor, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers();
 
       case 'lightSensor':
-        return this.createIlluminanceSensor(name, deviceId);
+        return new MatterbridgeEndpoint(lightSensor, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers();
+
+      case 'electricalSensor':
+        return new MatterbridgeEndpoint(electricalSensor, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers();
+
+      case 'contactSensor':
+        return new MatterbridgeEndpoint(contactSensor, { id: uniqueId })
+          .createDefaultBridgedDeviceBasicInformationClusterServer(
+            deviceName,
+            `WB-${uniqueId}`,
+            vid,
+            'Wirenboard',
+            `WB ${deviceName}`,
+            10000,
+            '1.0.0',
+          )
+          .createDefaultPowerSourceWiredClusterServer()
+          .addRequiredClusterServers();
 
       default:
+        this.log.warn(`Неизвестный тип устройства: ${mapping.matterDeviceType}`);
         return null;
     }
   }
 
-  private createTemperatureSensor(name: string, deviceId: string): MatterbridgeEndpoint {
-    const vid = this.matterbridge.aggregatorVendorId;
-    return new MatterbridgeEndpoint(temperatureSensor, { id: deviceId })
-      .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
-      .createDefaultPowerSourceWiredClusterServer()
-      .addRequiredClusterServers();
   }
-
-  private createHumiditySensor(name: string, deviceId: string): MatterbridgeEndpoint {
-    const vid = this.matterbridge.aggregatorVendorId;
-    return new MatterbridgeEndpoint(humiditySensor, { id: deviceId })
-      .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
-      .createDefaultPowerSourceWiredClusterServer()
-      .addRequiredClusterServers();
-  }
-
-  private createPowerSensor(name: string, deviceId: string): MatterbridgeEndpoint {
-    const vid = this.matterbridge.aggregatorVendorId;
-    return new MatterbridgeEndpoint(electricalSensor, { id: deviceId })
-      .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
-      .createDefaultPowerSourceWiredClusterServer()
-      .addRequiredClusterServers();
-  }
-
-  private createIlluminanceSensor(name: string, deviceId: string): MatterbridgeEndpoint {
-    const vid = this.matterbridge.aggregatorVendorId;
-    return new MatterbridgeEndpoint(lightSensor, { id: deviceId })
-      .createDefaultBridgedDeviceBasicInformationClusterServer(name, `WB-${deviceId}`, vid, 'Wirenboard', `Wirenboard ${name}`, 10000, '1.0.0')
-      .createDefaultPowerSourceWiredClusterServer()
-      .addRequiredClusterServers();
-  }
-}
