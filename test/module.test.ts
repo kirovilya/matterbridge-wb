@@ -16,7 +16,7 @@ import { LogLevel as MqttLogLevel, TimestampFormat } from 'node-ansi-logger';
 
 import { canMapToMatter, findMappingRule, getSupportedMatterTypes, isZ2mExcluded } from '../src/wbControlMapping.js';
 import { WbDeviceFactory } from '../src/WbDeviceFactory.js';
-import type { WbControl, WbDevice } from '../src/WbMqttClient.js';
+import type { WbControl, WbDevice, WbState } from '../src/WbMqttClient.js';
 import { WbMqttClient } from '../src/WbMqttClient.js';
 
 const mockLog = {
@@ -289,11 +289,33 @@ describe('wbControlMapping', () => {
       expect(rule).toBeDefined();
     });
 
-    it('should filter by control name includes', () => {
+    it('should filter by control name includes with partial match', () => {
       const control = createMockControl({ type: 'value', units: 'W', id: 'power_meter' });
       const device = createMockDevice();
       const rule = findMappingRule(control, device);
       expect(rule).toBeDefined();
+    });
+
+    it('should filter by driver and return undefined for non-matching driver', () => {
+      const control = createMockControl({ type: 'switch' });
+      const device = createMockDevice({ driver: 'wb-mqtt' });
+      const rule = findMappingRule(control, device);
+      expect(rule).toBeUndefined();
+    });
+
+    it('should use control id when control name is undefined', () => {
+      const control = createMockControl({ type: 'value', units: 'W', id: 'power_meter' });
+      delete control.name;
+      const device = createMockDevice();
+      const rule = findMappingRule(control, device);
+      expect(rule).toBeDefined();
+    });
+
+    it('should match rule with driver filter', () => {
+      const control = createMockControl({ type: 'switch' });
+      const device = createMockDevice({ driver: 'wb-gpio' });
+      const rule = findMappingRule(control, device);
+      expect(rule?.matterDeviceType).toBe('onOffSwitch');
     });
 
     it('should return rule with stateUpdate for sensors', () => {
@@ -346,6 +368,15 @@ describe('wbControlMapping', () => {
       const rule = findMappingRule(control, device);
       expect(rule?.stateUpdate).toBeDefined();
       expect(rule?.stateUpdate?.valueParser).toBeDefined();
+    });
+
+    it('should have valueParser for alarm control', () => {
+      const control = createMockControl({ type: 'alarm' });
+      const device = createMockDevice();
+      const rule = findMappingRule(control, device);
+      expect(rule?.stateUpdate?.valueParser).toBeDefined();
+      expect(rule?.stateUpdate?.valueParser(1)).toBe(true);
+      expect(rule?.stateUpdate?.valueParser(0)).toBe(false);
     });
 
     it('should have valueParser for switch', () => {
@@ -780,6 +811,7 @@ describe('WirenboardPlatform - Integration', () => {
       } as unknown as WbDeviceFactory;
 
       await instance.onStart('test');
+      expect(mockClient.start).toHaveBeenCalled();
     });
 
     it('should handle z2m excluded devices', async () => {
@@ -800,6 +832,7 @@ describe('WirenboardPlatform - Integration', () => {
       } as unknown as WbDeviceFactory;
 
       await instance.onStart('test');
+      expect(mockClient.start).toHaveBeenCalled();
     });
 
     it('should handle device with no serialNumber', async () => {
@@ -815,6 +848,7 @@ describe('WirenboardPlatform - Integration', () => {
       instance.unregisterDevice = jest.fn().mockResolvedValue(undefined);
 
       await instance.onConfigure();
+      expect(instance.getDevices).toHaveBeenCalled();
     });
 
     it('should handle device with serialNumber but no deviceName', async () => {
@@ -830,6 +864,7 @@ describe('WirenboardPlatform - Integration', () => {
       instance.validateDevice = jest.fn().mockReturnValue(true);
 
       await instance.onConfigure();
+      expect(instance.getDevices).toHaveBeenCalled();
     });
   });
 
@@ -843,7 +878,7 @@ describe('WirenboardPlatform - Integration', () => {
         serialNumber: 'WB-test',
       };
 
-      instance.getDevices = jest.fn().mockReturnValue([mockDevice]);
+      instance.getDevices = jest.fn<() => MatterbridgeEndpoint[]>().mockReturnValue([mockDevice]);
 
       await instance.onConfigure();
 
@@ -853,7 +888,7 @@ describe('WirenboardPlatform - Integration', () => {
     it('should handle empty device list in configure', async () => {
       instance = new WirenboardPlatform(createMockMatterbridge(), mockLog, createMockConfig());
 
-      instance.getDevices = jest.fn().mockReturnValue([]);
+      instance.getDevices = jest.fn<() => MatterbridgeEndpoint[]>().mockReturnValue([]);
 
       await instance.onConfigure();
 
@@ -940,10 +975,9 @@ describe('WirenboardPlatform - Integration', () => {
       const config = createMockConfig({ unregisterOnShutdown: false });
       instance = new WirenboardPlatform(createMockMatterbridge(), mockLog, config);
 
-      const mockClient = {
+      (instance as unknown as { mqttClient: { stop: jest.Mock } }).mqttClient = {
         stop: jest.fn().mockResolvedValue(undefined),
       };
-      instance.mqttClient = mockClient as unknown as WbMqttClient;
 
       await instance.onShutdown('test');
       expect(mockLog.info).toHaveBeenCalledWith('onShutdown called with reason: test');
@@ -953,10 +987,9 @@ describe('WirenboardPlatform - Integration', () => {
       const config = createMockConfig({ unregisterOnShutdown: true });
       instance = new WirenboardPlatform(createMockMatterbridge(), mockLog, config);
 
-      const mockClient = {
+      (instance as unknown as { mqttClient: { stop: jest.Mock } }).mqttClient = {
         stop: jest.fn().mockResolvedValue(undefined),
       };
-      instance.mqttClient = mockClient as unknown as WbMqttClient;
 
       instance.unregisterAllDevices = jest.fn().mockResolvedValue(undefined);
 
@@ -967,10 +1000,9 @@ describe('WirenboardPlatform - Integration', () => {
     it('should handle shutdown with undefined reason', async () => {
       instance = new WirenboardPlatform(createMockMatterbridge(), mockLog, createMockConfig());
 
-      const mockClient = {
+      (instance as unknown as { mqttClient: { stop: jest.Mock } }).mqttClient = {
         stop: jest.fn().mockResolvedValue(undefined),
       };
-      instance.mqttClient = mockClient as unknown as WbMqttClient;
 
       await instance.onShutdown();
       expect(mockLog.info).toHaveBeenCalledWith('onShutdown called with reason: none');
@@ -1052,9 +1084,10 @@ describe('WirenboardPlatform - Integration', () => {
   });
 
   describe('unregisterAllDevices', () => {
-    it('should handle unregister all', async () => {
-      instance = new WirenboardPlatform(createMockMatterbridge(), mockLog, createMockConfig());
-      await instance.unregisterAllDevices();
+    it('should handle unregister all without errors', async () => {
+      const config = createMockConfig({ unregisterOnShutdown: false });
+      instance = new WirenboardPlatform(createMockMatterbridge(), mockLog, config);
+      await expect(instance.unregisterAllDevices()).resolves.not.toThrow();
     });
   });
 });
@@ -1069,8 +1102,8 @@ describe('WbDeviceFactory', () => {
     }) as unknown as AnsiLogger;
 
   const createMockCallbacks = () => ({
-    getState: jest.fn().mockReturnValue(undefined),
-    setState: jest.fn().mockResolvedValue(undefined),
+    getState: jest.fn<() => WbState | undefined>().mockReturnValue(undefined),
+    setState: jest.fn<(deviceId: string, controlId: string, value: string | number) => Promise<void>>().mockResolvedValue(undefined),
   });
 
   const createMockDevice = (overrides: Partial<WbDevice> = {}): WbDevice => ({
@@ -1183,7 +1216,7 @@ describe('WbDeviceFactory', () => {
       expect(result.length).toBe(1);
     });
 
-    it('should create device for alarm control', () => {
+    it('should create contact sensor for alarm', () => {
       const factory = new WbDeviceFactory(createMockLog(), { aggregatorVendorId: 0xfff1 });
       const control = createMockControl({ type: 'alarm' });
       const result = factory.createDevices(createMockDevice(), [control], createMockCallbacks());
@@ -1221,13 +1254,13 @@ describe('WbDeviceFactory', () => {
     });
 
     it('should use control name as fallback', () => {
-      const factory = new WbDeviceFactory(createMockLog(), { aggregatorVendorId: 0xfff1 });
+      const factory = new WbDeviceFactory(createMockLog(), { aggregatorVendorId: 0xfff1, language: 'en' });
       const control = createMockControl({
         type: 'switch',
         readonly: false,
         name: 'My Switch',
       });
-      delete control.title;
+      control.title = undefined as never;
       const result = factory.createDevices(createMockDevice(), [control], createMockCallbacks());
       expect(result.length).toBe(1);
     });
@@ -1246,8 +1279,8 @@ describe('WbDeviceFactory', () => {
         readonly: false,
         id: 'control123',
       });
-      delete control.title;
-      delete control.name;
+      control.title = undefined as never;
+      control.name = undefined as never;
       const result = factory.createDevices(createMockDevice({ name: 'Device' }), [control], createMockCallbacks());
       expect(result.length).toBe(1);
     });
