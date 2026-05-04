@@ -53,10 +53,10 @@ export class WbDeviceFactory {
    *
    * Для будущего: можно добавить логику группировки нескольких контролов в одно устройство.
    *
-   * @param device - родительское устройство WB
-   * @param controls - массив контролов
-   * @param callbacks - коллбэки для работы с MQTT
-   * @returns массив Matter устройств (может быть пустым)
+   * @param {WbDevice} device - родительское устройство WB
+   * @param {WbControl[]} controls - массив контролов
+   * @param {MqttCallbacks} callbacks - коллбэки для работы с MQTT
+   * @returns {MatterbridgeEndpoint[]} массив Matter устройств (может быть пустым)
    */
   public createDevices(device: WbDevice, controls: WbControl[], callbacks: MqttCallbacks): MatterbridgeEndpoint[] {
     const result: MatterbridgeEndpoint[] = [];
@@ -106,8 +106,9 @@ export class WbDeviceFactory {
    * Определяет имя контрола для отображения в Matter.
    * Использует localized title, name или fallback.
    *
-   * @param control
-   * @param device
+   * @param {WbControl} control - контрол Wirenboard
+   * @param {WbDevice} device - устройство Wirenboard
+   * @returns {string} отображаемое имя контрола
    */
   private getControlName(control: WbControl, device: WbDevice): string {
     const langKey = this.language as 'en' | 'ru';
@@ -139,12 +140,13 @@ export class WbDeviceFactory {
   /**
    * Создаёт Matter устройство на основе правила мэппинга.
    *
-   * @param uniqueId
-   * @param deviceName
-   * @param device
-   * @param control
-   * @param mapping
-   * @param callbacks
+   * @param {string} uniqueId - уникальный ID устройства
+   * @param {string} deviceName - отображаемое имя устройства
+   * @param {WbDevice} device - устройство Wirenboard
+   * @param {WbControl} control - контрол Wirenboard
+   * @param {ControlMappingRule} mapping - правило мэппинга
+   * @param {MqttCallbacks} callbacks - коллбэки для работы с MQTT
+   * @returns {MatterbridgeEndpoint | null} Matter устройство или null
    */
   private createFromMapping(
     uniqueId: string,

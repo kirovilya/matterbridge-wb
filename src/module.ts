@@ -13,9 +13,10 @@ import { WbMqttClient } from './WbMqttClient.js';
 /**
  * Плагин для Wirenboard - подключает контролы WB как отдельные Matter устройства.
  *
- * @param matterbridge
- * @param log
- * @param config
+ * @param {PlatformMatterbridge} matterbridge - экземпляр Matterbridge
+ * @param {AnsiLogger} log - логгер
+ * @param {PlatformConfig} config - конфигурация платформы
+ * @returns {WirenboardPlatform} экземпляр платформы Wirenboard
  */
 export default function initializePlugin(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: PlatformConfig): WirenboardPlatform {
   return new WirenboardPlatform(matterbridge, log, config);
@@ -61,9 +62,10 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
   }
 
   /**
-   * Запуск плагина.
+   * Запуск платформы.
    *
-   * @param _reason
+   * @param {string=} _reason - причина запуска (опционально)
+   * @returns {Promise<void>}
    */
   override async onStart(_reason?: string): Promise<void> {
     this.log.info(`Starting Matterbridge Wirenboard plugin ...`);
@@ -97,7 +99,8 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
   /**
    * Изменение уровня логирования.
    *
-   * @param logLevel
+   * @param {LogLevel} logLevel - новый уровень логирования
+   * @returns {Promise<void>}
    */
   override async onChangeLoggerLevel(logLevel: LogLevel): Promise<void> {
     this.log.info(`onChangeLoggerLevel called with: ${logLevel}`);
@@ -106,7 +109,8 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
   /**
    * Остановка плагина.
    *
-   * @param reason
+   * @param {string=} reason - причина остановки (опционально)
+   * @returns {Promise<void>}
    */
   override async onShutdown(reason?: string): Promise<void> {
     await super.onShutdown(reason);
@@ -233,17 +237,19 @@ export class WirenboardPlatform extends MatterbridgeDynamicPlatform {
   }
 
   /**
-   * Определяет отображаемое имя контрола.
+   * Determined the display name of the control.
    *
-   * @param control
+   * @param control - Wirenboard control
    * @param control.title
    * @param control.title.en
    * @param control.title.ru
    * @param control.name
    * @param control.id
-   * @param device
+   * @param device - Wirenboard device
    * @param device.name
+   * @returns {string} display name
    */
+
   private getDeviceDisplayName(control: { title?: { en?: string; ru?: string }; name?: string; id: string }, device: { name: string }): string {
     const langKey = this.config.language as 'en' | 'ru';
 

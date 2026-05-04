@@ -58,9 +58,10 @@ export interface ControlMappingRule {
 /**
  * Проверяет, соответствует ли контрол условиям правила мэппинга.
  *
- * @param control
- * @param device
- * @param rule
+ * @param {WbControl} control - контрол Wirenboard
+ * @param {WbDevice} device - устройство Wirenboard
+ * @param {ControlMappingRule} rule - правило мэппинга
+ * @returns {boolean} true если контрол соответствует правилу
  */
 function matchesRule(control: WbControl, device: WbDevice, rule: ControlMappingRule): boolean {
   // Проверка driver
@@ -102,9 +103,9 @@ function matchesRule(control: WbControl, device: WbDevice, rule: ControlMappingR
  * Находит первое подходящее правило мэппинга для контрола.
  * Правила проверяются по порядку, первое совпадение возвращается.
  *
- * @param control
- * @param device
- * @returns Правило или undefined, если контрол не поддерживается
+ * @param {WbControl} control - контрол Wirenboard
+ * @param {WbDevice} device - устройство Wirenboard
+ * @returns {ControlMappingRule | undefined} Правило или undefined, если контрол не поддерживается
  */
 export function findMappingRule(control: WbControl, device: WbDevice): ControlMappingRule | undefined {
   return DEFAULT_MAPPINGS.find((rule) => matchesRule(control, device, rule));
@@ -116,8 +117,9 @@ export function findMappingRule(control: WbControl, device: WbDevice): ControlMa
  * - hidden = true (скрытый контрол)
  * - нет подходящего правила мэппинга
  *
- * @param control
- * @param device
+ * @param {WbControl} control - контрол Wirenboard
+ * @param {WbDevice} device - устройство Wirenboard
+ * @returns {boolean} true если контрол можно отобразить в Matter
  */
 export function canMapToMatter(control: WbControl, device: WbDevice): boolean {
   if (control.hidden) {
@@ -132,7 +134,8 @@ export function canMapToMatter(control: WbControl, device: WbDevice): boolean {
  * - driver = wb-rules
  * - name начинается с "0x" (hex адрес zigbee устройства)
  *
- * @param device
+ * @param {WbDevice} device - устройство Wirenboard
+ * @returns {boolean} true если устройство нужно исключить
  */
 export function isZ2mExcluded(device: WbDevice): boolean {
   return device.driver === 'wb-rules' && device.name.startsWith('0x');
@@ -308,9 +311,10 @@ const DEFAULT_MAPPINGS: ControlMappingRule[] = [
 /**
  * Конвертирует RGB в XY для Matter ColorControl.
  *
- * @param r
- * @param g
- * @param b
+ * @param {number} r - красный компонент (0-255)
+ * @param {number} g - зелёный компонент (0-255)
+ * @param {number} b - синий компонент (0-255)
+ * @returns {{x: number, y: number}} координаты XY
  */
 function rgbToXy(r: number, g: number, b: number): { x: number; y: number } {
   // Простая конверсия RGB -> XY (D65 illuminant)
@@ -344,6 +348,8 @@ function rgbToXy(r: number, g: number, b: number): { x: number; y: number } {
 /**
  * Возвращает список всех поддерживаемых типов Matter устройств.
  * Используется для отладки и диагностики.
+ *
+ * @returns {MatterDeviceType[]} массив поддерживаемых типов
  */
 export function getSupportedMatterTypes(): MatterDeviceType[] {
   return [...new Set(DEFAULT_MAPPINGS.map((r) => r.matterDeviceType))];
